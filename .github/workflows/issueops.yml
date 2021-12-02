@@ -1,0 +1,140 @@
+# https://github.com/githubuniverseworkshops/GitHub-Actions-Planet-GitHubUniverse2021
+name: Create repository with IssueOps
+on:
+  issues:
+    types: [opened, demilestoned]
+
+jobs:
+  create-repo:
+    runs-on: ubuntu-latest
+    environment: ci-cd-scripts
+    if: contains(github.event.issue.labels.*.name, 'issueops:new-repo')
+    env:
+      # ID of Milestone to group the issue in
+      MILESTONE: 1
+    steps:
+        
+      - name: Print Context
+        uses: actions/github-script@v5
+        with:
+          script: |
+            console.log(context)
+            
+      - name: Create GitHub Repo
+        id: create-github-repo
+        uses: actions/github-script@v5
+        with:
+          github-token: ${{ secrets.ORG_TOKEN }}
+          script: |
+            bodySplit = context.payload.issue.body.split("\n")
+            // Set vars for this step
+            let repoName = bodySplit[2]
+            let templateRepo = bodySplit[6]
+            let teams = bodySplit[10]
+            let enableIssue = bodySplit[14].includes("X")
+            let enableProject = bodySplit[18].includes("X")
+            let enableSquashMerge = bodySplit[22].includes("X")
+            let enableForking = bodySplit[26].includes("X")
+            // Set vars for subsequent steps
+            core.setOutput('repoName', repoName);
+            core.setOutput('org', context.payload.organization.login);
+            core.setOutput('teams', teams);
+            core.setOutput('enableIssue', enableIssue);
+            core.setOutput('enableProject', enableProject);
+            core.setOutput('enableSquashMerge', enableSquashMerge);
+            core.setOutput('enableForking', enableForking);
+            // Print vars to the log
+            console.log("New repository name: " + bodySplit[2])
+            console.log("Template Repository: " + bodySplit[6])
+            console.log("Team: " + bodySplit[10])
+            console.log("Enable Issue: " +  bodySplit[14].includes("X"))
+            console.log("Enable Project: " +  bodySplit[18].includes("X"))
+            console.log("Allow Squash Merge: " +  bodySplit[22].includes("X"))
+            console.log("Allow Forking: " +  bodySplit[26].includes("X"))
+            
+            console.log("New repo: " + repoName + " Template Repo: " + templateRepo + " Teams: " + teams)
+            
+            console.log("Commenting on issue '" + context.payload.issue.title + "' - " + context.payload.issue.html_url)
+            try { 
+              await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: 'Workflow [' + context.workflow + ' #' + context.runNumber + '](' + context.payload.repository.html_url + '/actions/runs/' + context.runId + ') has picked up this issue'
+             }) 
+            } catch(err) {
+              core.setFailed(`Action failed with error ${err}`);
+            }
+            
+            console.log("Adding issue to Milestone [${{ env.MILESTONE }}]")
+            try {
+              await github.rest.issues.update({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              milestone: ${{ env.MILESTONE }}
+             }) 
+            } catch(err) {
+              core.setFailed(`Action failed with error ${err}`);
+            }
+            
+            console.log("Creating repo from template")
+            try {
+              await github.rest.repos.createUsingTemplate({
+                template_owner: context.payload.organization.login,
+                template_repo: templateRepo,
+                name: repoName,
+                owner: context.payload.organization.login,
+                description: "Test",
+                include_all_branches: true,
+                private: false
+              })
+            } catch(err) {
+              core.setFailed(`Action failed with error ${err}`);
+            }
+    outputs:
+      org:                ${{ steps.create-github-repo.outputs.org }}
+      repoName:           ${{ steps.create-github-repo.outputs.repoName }}
+      teams:              ${{ steps.create-github-repo.outputs.teams }}
+      enableIssue:        ${{ steps.create-github-repo.outputs.enableIssue }}
+      enableProject:      ${{ steps.create-github-repo.outputs.enableProject }}
+      enableSquashMerge:  ${{ steps.create-github-repo.outputs.enableSquashMerge }}
+      enableForking:      ${{ steps.create-github-repo.outputs.enableForking }}
+
+  debug:
+    if: contains(github.event.issue.labels.*.name, 'issueops:new-repo')
+    needs: create-repo
+    runs-on: ubuntu-latest
+    steps:
+    
+    - name: Dump GitHub context
+      env:
+        GITHUB_CONTEXT: ${{ toJson(github) }}
+      run: |
+        echo "$GITHUB_CONTEXT"
+        
+    - name: Validate job outputs
+      run: |
+        echo "org: [${{ needs.create-repo.outputs.org }}]"
+        echo "repoName: [${{ needs.create-repo.outputs.repoName }}]"
+        echo "teams: [${{ needs.create-repo.outputs.teams }}]"
+        echo "enableIssue: [${{ needs.create-repo.outputs.enableIssue }}]"
+        echo "enableProject: [${{ needs.create-repo.outputs.enableProject }}]"
+        echo "enableSquashMerge: [${{ needs.create-repo.outputs.enableSquashMerge }}]"
+        echo "enableForking: [${{ needs.create-repo.outputs.enableForking }}]"
+
+  # https://docs.github.com/en/actions/learn-github-actions/reusing-workflows
+  configure-repo:
+    uses: ci-cd-scripts/called-workflows/.github/workflows/configure-repo.yml@main
+    if: contains(github.event.issue.labels.*.name, 'issueops:new-repo')
+    needs: create-repo
+    with:
+      org:                ${{ needs.create-repo.outputs.org }}
+      repoName:           ${{ needs.create-repo.outputs.repoName }}
+      teams:              ${{ needs.create-repo.outputs.teams }}
+      enableIssue:        ${{ needs.create-repo.outputs.enableIssue }}
+      enableProject:      ${{ needs.create-repo.outputs.enableProject }}
+      enableSquashMerge:  ${{ needs.create-repo.outputs.enableSquashMerge }}
+      enableForking:      ${{ needs.create-repo.outputs.enableForking }}
+    secrets:
+      caller-token: ${{ secrets.ORG_TOKEN }}
